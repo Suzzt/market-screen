@@ -1,5 +1,8 @@
 # 全球指数实时行情大屏
 
+[![构建镜像](https://github.com/Suzzt/market-screen/actions/workflows/docker.yml/badge.svg)](https://github.com/Suzzt/market-screen/actions/workflows/docker.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
 单文件（`index.html`）的纯前端行情大屏，无需构建、无外部依赖、无 npm 包。
 实时展示 A 股 / 港股 / 美股共 14 个主要指数，带**流动弹幕**和**5 套可切换皮肤**。
 
@@ -86,7 +89,16 @@ docker run -d --name market-screen -p 8788:8788 --restart unless-stopped \
   ghcr.io/suzzt/market-screen:latest
 ```
 
-镜像还没推到 registry 的话，本地构建：
+镜像由 GitHub Actions 自动构建推送，支持 `linux/amd64` 和 `linux/arm64`
+（Apple Silicon、树莓派都能直接跑）。可用 tag：
+
+| tag | 说明 |
+| --- | --- |
+| `latest` | main 分支最新 |
+| `1.2.3` / `1.2` | 打 `v*` 标签时生成 |
+| `sha-abc1234` | 按 commit 固定版本，生产环境建议用这个 |
+
+也可以本地构建：
 
 ```bash
 git clone https://github.com/Suzzt/market-screen.git

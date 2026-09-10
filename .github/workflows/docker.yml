@@ -1,0 +1,102 @@
+name: 构建并推送镜像到 GHCR
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+    # 只碰文档时不必重新构建
+    paths-ignore:
+      - "README.md"
+      - "LICENSE"
+      - ".gitignore"
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  REGISTRY: ghcr.io
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # ghcr.io 只接受全小写的镜像名，而仓库主人是 Suzzt（带大写）
+      - name: 计算镜像名
+        run: echo "IMAGE=${GITHUB_REPOSITORY,,}" >> "$GITHUB_ENV"
+
+      - name: 自检 entrypoint 的 DM_API 注入逻辑
+        run: |
+          set -eu
+          for v in "" "null" "off" 'http://a.b/c?x=1&y="z"'; do
+            DM_API="$v" python3 - <<'PY'
+          import json, os, re, sys
+          val = os.environ.get("DM_API", "")
+          lit = "null" if val.strip().lower() in ("null", "none", "off") else json.dumps(val)
+          src = open("index.html", encoding="utf-8").read()
+          out, n = re.subn(r"^const DM_API\s*=[^;]*;$",
+                           "const DM_API   = %s;" % lit, src, count=1, flags=re.M)
+          if n != 1:
+              sys.exit("DM_API 声明没匹配上，entrypoint 会在容器里失败")
+          print(f"  DM_API={val!r} -> const DM_API   = {lit};")
+          PY
+          done
+
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+
+      - name: 登录 GHCR
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 生成 tag 和 label
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE }}
+          tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=sha,format=short
+
+      - name: 构建并推送
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: 冒烟测试（拉起容器验证接口）
+        if: github.event_name != 'pull_request'
+        env:
+          TAG: ${{ env.REGISTRY }}/${{ env.IMAGE }}:${{ steps.meta.outputs.version }}
+        run: |
+          set -eu
+          docker run -d --name smoke -p 8788:8788 "$TAG"
+          for i in $(seq 1 20); do
+            if curl -fsS "http://127.0.0.1:8788/danmaku?since=-1" >/dev/null 2>&1; then break; fi
+            sleep 1
+          done
+          echo "--- 容器日志 ---"; docker logs smoke
+          echo "--- 注入结果 ---"
+          curl -fsS http://127.0.0.1:8788/ | grep -o 'const DM_API   = [^;]*;'
+          echo "--- 发一条弹幕再读回来 ---"
+          curl -fsS -X POST http://127.0.0.1:8788/danmaku \
+            -H 'Content-Type: application/json' -d '{"text":"ci smoke","color":"#fff"}'
+          curl -fsS "http://127.0.0.1:8788/danmaku?since=0" | grep -q "ci smoke"
+          echo "冒烟测试通过"
+          docker rm -f smoke >/dev/null

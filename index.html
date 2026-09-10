@@ -979,7 +979,7 @@ function drawKline(ctx,w,h,q){
      ""                        → 同源，用 danmaku_server.py 同时托管本页面时用这个
      "http://192.168.1.20:8788" → 指向另一台机器上的弹幕服务
    配套脚本 danmaku_server.py 零依赖，python3 danmaku_server.py 即可跑。 */
-const DM_API   = "";
+const DM_API   = null;
 const DM_MAX   = 50;   // 屏上同时存在的弹幕上限
 const DM_LANE  = 30;   // 轨道高度 px
 const dmLanes  = [];   // 每条轨道的「可再放行时刻」

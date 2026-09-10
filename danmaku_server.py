@@ -118,19 +118,33 @@ class Handler(SimpleHTTPRequestHandler):
             super().log_message(fmt, *args)
 
 
-def main():
-    port = int(sys.argv[1]) if len(sys.argv) > 1 else 8788
-    srv  = ThreadingHTTPServer(("0.0.0.0", port), Handler)
-    ip   = "127.0.0.1"
+def _lan_ip() -> str:
     try:
         import socket
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        s.connect(("8.8.8.8", 80)); ip = s.getsockname()[0]; s.close()
+        s.connect(("8.8.8.8", 80))
+        ip = s.getsockname()[0]
+        s.close()
+        return ip
     except Exception:
-        pass
-    print(f"大屏   http://{ip}:{port}/")
-    print(f"弹幕   http://{ip}:{port}/danmaku")
-    print("提示：把 index.html 里的 DM_API 改成 \"\" 才会连上这个服务。Ctrl+C 退出。")
+        return "127.0.0.1"
+
+
+def main():
+    port = int(sys.argv[1]) if len(sys.argv) > 1 else 8788
+    srv  = ThreadingHTTPServer(("0.0.0.0", port), Handler)
+
+    if os.environ.get("MS_IN_DOCKER"):
+        # 容器里打印容器内网 IP 没意义，宿主机地址取决于 -p 映射
+        print(f"监听 0.0.0.0:{port}（宿主机地址取决于 docker run -p 的映射）")
+        print("DM_API 已由 entrypoint 按环境变量注入，无需手改 index.html。")
+    else:
+        ip = _lan_ip()
+        print(f"大屏   http://{ip}:{port}/")
+        print(f"弹幕   http://{ip}:{port}/danmaku")
+        print("提示：把 index.html 里的 DM_API 改成 \"\" 才会连上这个服务。")
+    print("Ctrl+C 退出。")
+
     try:
         srv.serve_forever()
     except KeyboardInterrupt:

@@ -1,0 +1,16 @@
+.git
+.gitignore
+.github
+.claude
+.idea
+.vscode
+.DS_Store
+__pycache__/
+*.py[cod]
+*.log
+_test_*.html
+README.md
+LICENSE
+Dockerfile
+.dockerignore
+docker-compose.yml

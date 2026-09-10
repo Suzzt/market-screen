@@ -1,0 +1,11 @@
+services:
+  market-screen:
+    build: .
+    image: market-screen:latest
+    container_name: market-screen
+    ports:
+      - "8788:8788"
+    environment:
+      # "" = 同源联机弹幕（默认）；null = 关闭联机
+      DM_API: ""
+    restart: unless-stopped

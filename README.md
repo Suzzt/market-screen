@@ -21,6 +21,8 @@ python3 danmaku_server.py
 启动后终端会打印局域网地址，同事打开 `http://<你的IP>:8788/` 就能同屏发弹幕。
 **注意**：联机前要把 `index.html` 里的 `DM_API` 从 `null` 改成 `""`（见下）。
 
+**Docker 部署**：见下面的 [Docker](#docker) 一节，一条命令搞定，联机弹幕默认就开着。
+
 ## 功能
 
 | 区域 | 说明 |
@@ -73,6 +75,54 @@ POST /danmaku  {"text":"...","color":"#fff"}
 ```
 
 `since=-1` 表示「我刚上线，只要之后的新弹幕」，不会灌历史记录。
+
+## Docker
+
+镜像基于 `python:3.12-alpine`，只用 Python 标准库，无第三方依赖，约 83MB。
+容器同时托管页面和弹幕接口，**联机弹幕默认开启**，不用改代码。
+
+```bash
+docker run -d --name market-screen -p 8788:8788 --restart unless-stopped \
+  ghcr.io/suzzt/market-screen:latest
+```
+
+镜像还没推到 registry 的话，本地构建：
+
+```bash
+git clone https://github.com/Suzzt/market-screen.git
+cd market-screen
+docker build -t market-screen .
+docker run -d --name market-screen -p 8788:8788 --restart unless-stopped market-screen
+```
+
+然后打开 `http://<宿主机IP>:8788/`。
+
+或者用 compose：
+
+```bash
+docker compose up -d
+```
+
+### 环境变量
+
+| 变量 | 默认 | 说明 |
+| --- | --- | --- |
+| `DM_API` | `""` | 弹幕联机模式。`""` 同源联机（推荐）；`null` / `off` 关闭联机；`http://host:port` 指向另一台机器的弹幕服务。容器启动时由 entrypoint 注入进页面，不用手改文件 |
+| `PORT` | `8788` | 容器内监听端口，改了记得同步改 `-p` 映射 |
+
+例：只要大屏、不要联机弹幕（弹幕仍可本机自己发）：
+
+```bash
+docker run -d -p 8788:8788 -e DM_API=null market-screen
+```
+
+例：换端口：
+
+```bash
+docker run -d -p 9000:9000 -e PORT=9000 market-screen
+```
+
+容器带 `HEALTHCHECK`，`docker ps` 能直接看到 `healthy`。
 
 ## 主题
 
@@ -129,16 +179,28 @@ const INDICES = [
 
 ```
 market-screen/
-├── index.html          大屏本体（单文件，含全部 CSS/JS）
-├── danmaku_server.py   可选：弹幕服务 + 静态托管，零依赖
+├── index.html             大屏本体（单文件，含全部 CSS/JS）
+├── danmaku_server.py      可选：弹幕服务 + 静态托管，零依赖
+├── Dockerfile             容器镜像
+├── docker-entrypoint.sh   启动时把 DM_API 注入页面
+├── docker-compose.yml
+├── .dockerignore
 ├── README.md
-└── LICENSE             MIT
+└── LICENSE                MIT
 ```
 
 ## 安全提示
 
-`danmaku_server.py` 监听 `0.0.0.0` 且**没有任何鉴权**，同网段任何人都能访问页面和发弹幕。
-内网自用没问题，**不要直接暴露到公网**。
+`danmaku_server.py`（含 Docker 容器）监听 `0.0.0.0` 且**没有任何鉴权**，
+能访问到端口的人都可以看页面、发弹幕。内网自用没问题，**不要直接暴露到公网**。
+
+真要放到公网，至少做一层：
+
+- 反向代理加 Basic Auth / OAuth（Nginx、Caddy、Cloudflare Access 都行）
+- 或者只绑本机再走 SSH 隧道：`docker run -p 127.0.0.1:8788:8788 ...`
+
+另外行情数据来自腾讯的公开接口，页面刷得越勤、开的人越多，被限流的概率越高，
+公开部署建议把刷新频率调到 10s 以上。
 
 ## License
 

@@ -152,11 +152,11 @@ h1{font-size:26px;letter-spacing:5px;font-weight:700;white-space:nowrap;
 .clock{text-align:right;font-family:ui-monospace,"SF Mono",Menlo,monospace;line-height:1.25}
 .clock .t{font-size:24px;color:var(--txt);letter-spacing:2px}
 .clock .d{font-size:11px;color:var(--txt3);letter-spacing:1.5px}
-.mk-status{display:flex;gap:7px}
-.mk{padding:5px 10px;border-radius:8px;border:1px solid var(--line);background:var(--panel2);
-  font-size:11px;line-height:1.35;text-align:center;min-width:66px}
-.mk b{display:block;font-size:12px;letter-spacing:1px;color:var(--txt2);font-weight:600}
-.mk i{font-style:normal;font-size:10px;letter-spacing:.5px}
+.mk-status{display:flex;gap:5px}
+.mk{padding:5px 7px;border-radius:8px;border:1px solid var(--line);background:var(--panel2);
+  font-size:11px;line-height:1.35;text-align:center;min-width:54px}
+.mk b{display:block;font-size:11.5px;letter-spacing:.5px;color:var(--txt2);font-weight:600}
+.mk i{font-style:normal;font-size:9.5px;letter-spacing:0}
 .mk.open{border-color:color-mix(in srgb,var(--up) 50%,transparent)}
 .mk.open i{color:var(--up2)} .mk.open b{color:var(--txt)}
 .mk.closed i{color:var(--txt3)}
@@ -290,7 +290,8 @@ h1{font-size:26px;letter-spacing:5px;font-weight:700;white-space:nowrap;
   padding:9px 18px;border-radius:9px;font-size:13px;display:none}
 .foot{flex:0 0 auto;display:flex;justify-content:space-between;font-size:10.5px;color:var(--txt3);
   font-family:ui-monospace,monospace;letter-spacing:.5px;padding:0 2px}
-@media(max-width:1500px){.main{grid-template-columns:280px 1fr 260px}h1{font-size:22px}.kpi-px{font-size:28px}}
+@media(max-width:1500px){.main{grid-template-columns:280px 1fr 260px}h1{font-size:22px}.kpi-px{font-size:28px}
+  .subtitle{display:none}.mk{min-width:48px;padding:5px 5px}.btn{padding:6px 8px}}
 @media(max-width:1180px){.main{grid-template-columns:1fr}.kpi-row{grid-template-columns:repeat(2,1fr)}
   body{overflow:auto}#app{height:auto;min-height:100vh}.main{min-height:1200px}}
 </style>
@@ -401,13 +402,21 @@ const INDICES = [
   { code:"usDJI",    name:"道琼斯",     mk:"us" },
   { code:"usIXIC",   name:"纳斯达克",   mk:"us" },
   { code:"usINX",    name:"标普500",    mk:"us" },
+  // 日韩指数腾讯没有，走东方财富（src:"em"，code 即东财 secid）
+  { code:"100.N225", name:"日经225",    mk:"jp", src:"em" },
+  { code:"100.KS11", name:"韩国KOSPI",  mk:"kr", src:"em" },
 ];
-const MK_NAME = { cn:"A股", hk:"港股", us:"美股" };
-/* 交易时段（北京时间，分钟数）；美股按夏令时 21:30-04:00 近似 */
+const MK_NAME = { cn:"A股", hk:"港股", us:"美股", jp:"日股", kr:"韩股" };
+/* 交易时段（北京时间，分钟数）
+   美股按夏令时 21:30-04:00 近似
+   日经 09:00-11:30 / 12:30-15:30 JST = 北京 08:00-10:30 / 11:30-14:30
+   KOSPI 09:00-15:30 KST 连续无午休 = 北京 08:00-14:30 */
 const MK_SESSION = {
   cn:[[570,690],[780,900]],
   hk:[[570,720],[780,960]],
   us:[[1290,1440],[0,240]],
+  jp:[[480,630],[690,870]],
+  kr:[[480,870]],
 };
 const THEMES = [
   { id:"ocean",  name:"深空蓝",   sw:"linear-gradient(90deg,#0a1a3a,#00e5ff)" },
@@ -421,6 +430,11 @@ const MIN_URL  = "https://web.ifzq.gtimg.cn/appstock/app/minute/query?code=";
 const KL_BASE  = "https://web.ifzq.gtimg.cn/appstock/app/";
 const KL_PATH  = { cn:"fqkline/get", hk:"hkfqkline/get", us:"usfqkline/get" };
 const KL_DAYS  = 60;
+/* 东方财富。主域名偶尔会对某些网络限流，所以按顺序试多个主机 */
+const EM_QT_HOSTS  = ["https://push2.eastmoney.com", "https://push2delay.eastmoney.com"];
+const EM_HIS_HOSTS = ["https://push2his.eastmoney.com", "https://push2delay.eastmoney.com",
+                      "https://push2.eastmoney.com"];
+const EM_QT_FIELDS = "f1,f2,f3,f4,f5,f6,f12,f13,f14,f15,f16,f17,f18,f124";
 
 /* ============================================================
  *  状态
@@ -518,7 +532,7 @@ function marketState(mk){
   return { open:false, txt: mk==="us" ? "休市" : (before?"待开盘":"已收盘") };
 }
 function amountText(mk, wan){
-  if (mk==="us" || !wan || isNaN(wan)) return null;
+  if (mk==="us" || mk==="jp" || mk==="kr" || !wan || isNaN(wan)) return null;
   const yi = wan/10000;
   return yi>=10000 ? (yi/10000).toFixed(2)+"万亿" : yi.toFixed(0)+"亿";
 }
@@ -532,7 +546,13 @@ function toast(msg){
  * ========================================================== */
 /* qt.gtimg.cn 返回 GBK，用 TextDecoder 解码；失败则回退 JSONP */
 async function fetchQuotes(){
-  const codes = INDICES.map(i=>i.code).join(",");
+  // 两个数据源各拉各的，一边挂了不影响另一边
+  const rs = await Promise.allSettled([fetchQuotesTx(), fetchQuotesEm()]);
+  if(rs.every(r => r.status === "rejected")) throw rs[0].reason;
+}
+async function fetchQuotesTx(){
+  const codes = INDICES.filter(i=>!i.src).map(i=>i.code).join(",");
+  if(!codes) return;
   const url = QT_URL + codes + "&_=" + Date.now();
   let text;
   try{
@@ -552,7 +572,7 @@ function jsonpText(url){
     const s = document.createElement("script");
     s.src = url + "&_=" + Date.now();
     s.onload = () => {
-      const out = INDICES.map(i=>{
+      const out = INDICES.filter(i=>!i.src).map(i=>{
         const v = window["v_"+i.code];
         return v ? `v_${i.code}="${v}";` : "";
       }).join("\n");
@@ -585,7 +605,89 @@ function parseQuotes(text){
   }
   if(!got) throw new Error("no data parsed");
 }
+/* 依次尝试多个主机，第一个通过 ok() 校验的胜出。
+   成功的主机会被记住并优先使用，免得每轮都先撞一次被限流的域名。 */
+const emHostPick = {};
+async function emFetch(hosts, path, ok){
+  const key = hosts[0], stick = emHostPick[key];
+  const order = stick ? [stick, ...hosts.filter(h => h !== stick)] : hosts;
+  let lastErr;
+  for(const h of order){
+    try{
+      const r = await fetch(h + path + "&_=" + Date.now(), {cache:"no-store"});
+      if(!r.ok) throw new Error("HTTP " + r.status);
+      const j = await r.json();
+      if(ok(j)){ emHostPick[key] = h; return j; }
+      lastErr = new Error("空数据");
+    }catch(e){ lastErr = e; }
+  }
+  delete emHostPick[key];          // 记住的主机也挂了，下轮重新从头试
+  throw lastErr || new Error("东财无可用主机");
+}
+async function fetchQuotesEm(){
+  const list = INDICES.filter(i=>i.src === "em");
+  if(!list.length) return;
+  const j = await emFetch(EM_QT_HOSTS,
+    `/api/qt/ulist.np/get?secids=${list.map(i=>i.code).join(",")}&fields=${EM_QT_FIELDS}`,
+    j => j && j.data && j.data.diff && j.data.diff.length);
+  let got = 0;
+  for(const r of j.data.diff){
+    const code = `${r.f13}.${r.f12}`;
+    const cfg  = INDICES.find(i=>i.code === code); if(!cfg) continue;
+    const sc   = Math.pow(10, r.f1 || 2);
+    const now = r.f2/sc, prec = r.f18/sc, high = r.f15/sc, low = r.f16/sc;
+    if(!now || !prec) continue;
+    const chg = now - prec;
+    S.quotes[code] = {
+      code, name:cfg.name, mk:cfg.mk,
+      now, prec, open:r.f17/sc, high, low,
+      chg, pct: chg/prec*100,
+      amp: (high-low)/prec*100,
+      vol: +r.f5 || 0,
+      amountWan: 0,              // 东财这两个指数不给成交额
+      time: r.f124 ? emTime(r.f124) : "",
+      ts: Date.now(),
+    };
+    got++;
+  }
+  if(!got) throw new Error("东财行情解析为空");
+}
+/* epoch 秒 -> 与腾讯一致的 yyyyMMddHHmmss，好让展示逻辑共用 */
+function emTime(sec){
+  const d = new Date(sec * 1000);
+  return `${d.getFullYear()}${pad(d.getMonth()+1)}${pad(d.getDate())}` +
+         `${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`;
+}
+/* 东财分时：每行 "yyyy-MM-dd HH:mm,开,收,高,低,量,额,均价"，时间已是北京时间 */
+async function fetchMinuteEm(code){
+  const j = await emFetch(EM_HIS_HOSTS,
+    `/api/qt/stock/trends2/get?secid=${code}&fields1=f1,f2,f3,f4,f5` +
+    `&fields2=f51,f52,f53,f54,f55,f56,f57,f58&iscr=0&ndays=1`,
+    j => j && j.data && j.data.trends && j.data.trends.length);
+  const pts = j.data.trends.map(line=>{
+    const a = line.split(",");
+    return { t: a[0].slice(11).replace(":",""), p: +a[2], v: +a[5] || 0 };
+  }).filter(p=>p.p>0);
+  S.minutes[code] = { pts, date: (j.data.trends[0]||"").slice(0,10).replace(/-/g,"") };
+}
+/* 东财日K：每行 "日期,开,收,高,低,量,..."，前六列顺序与腾讯一致 */
+async function fetchKlineEm(code){
+  const beg = new Date(Date.now() - 200*86400000);
+  const begStr = `${beg.getFullYear()}${pad(beg.getMonth()+1)}${pad(beg.getDate())}`;
+  const j = await emFetch(EM_HIS_HOSTS,
+    `/api/qt/stock/kline/get?secid=${code}&klt=101&fqt=1&beg=${begStr}&end=20500101` +
+    `&fields1=f1,f2,f3,f4,f5,f6&fields2=f51,f52,f53,f54,f55,f56`,
+    j => j && j.data && j.data.klines && j.data.klines.length);
+  const rows = j.data.klines.slice(-KL_DAYS);
+  S.klines[code] = rows.map(line=>{
+    const a = line.split(",");
+    return { d:a[0], o:+a[1], c:+a[2], h:+a[3], l:+a[4], v:+a[5] };
+  }).filter(k=>k.c>0);
+}
+
 async function fetchMinute(code){
+  const cfg = INDICES.find(i=>i.code===code);
+  if(cfg && cfg.src === "em") return fetchMinuteEm(code);
   const r = await fetch(MIN_URL + code + "&_=" + Date.now(), {cache:"no-store"});
   const j = await r.json();
   const node = j && j.data && j.data[code] && j.data[code].data;
@@ -601,13 +703,21 @@ async function fetchMinute(code){
 }
 async function fetchKline(code){
   const cfg = INDICES.find(i=>i.code===code); if(!cfg) return;
-  const url = `${KL_BASE}${KL_PATH[cfg.mk]}?param=${code},day,,,${KL_DAYS},qfq&_=${Date.now()}`;
-  const r = await fetch(url, {cache:"no-store"});
-  const j = await r.json();
-  const node = j && j.data && j.data[code]; if(!node) return;
-  const rows = node.qfqday || node.day; if(!rows || !rows.length) return;
-  S.klines[code] = rows.map(a=>({ d:a[0], o:+a[1], c:+a[2], h:+a[3], l:+a[4], v:+a[5] }))
-                       .filter(k=>k.c>0);
+  try{
+    if(cfg.src === "em"){ await fetchKlineEm(code); return; }
+    const url = `${KL_BASE}${KL_PATH[cfg.mk]}?param=${code},day,,,${KL_DAYS},qfq&_=${Date.now()}`;
+    const r = await fetch(url, {cache:"no-store"});
+    const j = await r.json();
+    const node = j && j.data && j.data[code];
+    const rows = node && (node.qfqday || node.day);
+    if(!rows || !rows.length) throw new Error("日K 空数据");
+    S.klines[code] = rows.map(a=>({ d:a[0], o:+a[1], c:+a[2], h:+a[3], l:+a[4], v:+a[5] }))
+                         .filter(k=>k.c>0);
+  }catch(e){
+    // 空数组 = 取过但没拿到，绘图据此提示，而不是一直当"加载中"
+    if(!(S.klines[code] || []).length) S.klines[code] = [];
+    throw e;
+  }
 }
 async function fetchAllMinutes(){
   await Promise.allSettled(INDICES.map(i=>fetchMinute(i.code)));
@@ -738,7 +848,7 @@ function renderHeader(){
   const d = bjNow();
   $("#clkT").textContent = `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
   $("#clkD").textContent = `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} 周${"日一二三四五六"[d.getDay()]} · 北京时间`;
-  $("#mkStatus").innerHTML = ["cn","hk","us"].map(mk=>{
+  $("#mkStatus").innerHTML = Object.keys(MK_NAME).map(mk=>{
     const st = marketState(mk);
     return `<div class="mk ${st.open?"open":"closed"}"><b>${MK_NAME[mk]}</b><i><span class="dot"></span>${st.txt}</i></div>`;
   }).join("");
@@ -751,6 +861,9 @@ const CHART_META = {
   cn:{ total:242, ticks:[[0,"09:30"],[.25,"10:30"],[.5,"11:30|13:00"],[.75,"14:00"],[1,"15:00"]] },
   hk:{ total:331, ticks:[[0,"09:30"],[.25,"10:45"],[.5,"12:00|13:00"],[.75,"14:30"],[1,"16:00"]] },
   us:{ total:391, ticks:[[0,"09:30"],[.23,"11:00"],[.5,"12:45"],[.77,"14:30"],[1,"16:00"]] },
+  // 日韩横轴标的是北京时间，和页面时钟一致
+  jp:{ total:331, ticks:[[0,"08:00"],[.227,"09:15"],[.455,"10:30|11:30"],[.727,"13:00"],[1,"14:30"]] },
+  kr:{ total:391, ticks:[[0,"08:00"],[.231,"09:30"],[.5,"11:15"],[.769,"13:00"],[1,"14:30"]] },
 };
 function fitCanvas(cv){
   const r = cv.getBoundingClientRect(), dpr = window.devicePixelRatio || 1;
@@ -792,12 +905,18 @@ function drawChart(){
   const q = S.quotes[S.sel]; if(!q) return;
   const pts = (S.minutes[S.sel]||{}).pts || [];
   // 日K模式，或分时无数据（休市）时自动回退到日K
-  if(S.mode==="day" || (pts.length<2 && (S.klines[S.sel]||[]).length>1)){
-    if(!S.klines[S.sel]){ fetchKline(S.sel).then(drawChart).catch(()=>{}); }
-    if((S.klines[S.sel]||[]).length>1){ return drawKline(ctx,w,h,q); }
+  const ks = S.klines[S.sel];
+  let klineNote = "";
+  if(S.mode==="day" || (pts.length<2 && (ks||[]).length>1)){
+    if(!ks){ fetchKline(S.sel).then(drawChart).catch(()=>{}); }
+    if((ks||[]).length>1) return drawKline(ctx,w,h,q);
+    if(S.mode==="day"){
+      klineNote = ks ? "该指数日K数据源暂不可用，下方为分时" : "日K加载中…";
+    }
   }
   const meta = CHART_META[q.mk];
-  const L=62, R=64, T=14, B=26, VOL_H = Math.min(78, h*0.22);
+  const hasVol = pts.some(p => p.v > 0);      // 日经等指数不报成交量
+  const L=62, R=64, T=14, B=26, VOL_H = hasVol ? Math.min(78, h*0.22) : 0;
   const pw = w-L-R, ph = h-T-B-VOL_H-8;
   if(pw<20||ph<20) return;
 
@@ -832,22 +951,29 @@ function drawChart(){
   });
   // 成交量
   const volTop = T+ph+8, maxV = Math.max(1, ...pts.map(p=>p.v));
-  ctx.strokeStyle = TC.grid;
-  ctx.beginPath(); ctx.moveTo(L,volTop+VOL_H); ctx.lineTo(L+pw,volTop+VOL_H); ctx.stroke();
-  const bw = Math.max(1, pw/meta.total*0.72);
-  pts.forEach((p,i)=>{
-    const prevP = i? pts[i-1].p : q.prec;
-    ctx.fillStyle = (p.p>=prevP ? TC.up : TC.down) + "8c";
-    const bh = p.v/maxV*VOL_H;
-    ctx.fillRect(X(i)-bw/2, volTop+VOL_H-bh, bw, bh);
-  });
-  ctx.fillStyle = TC.hint; ctx.textAlign = "right";
-  ctx.fillText("量", L-8, volTop+VOL_H/2);
+  if(hasVol){
+    ctx.strokeStyle = TC.grid;
+    ctx.beginPath(); ctx.moveTo(L,volTop+VOL_H); ctx.lineTo(L+pw,volTop+VOL_H); ctx.stroke();
+    const bw = Math.max(1, pw/meta.total*0.72);
+    pts.forEach((p,i)=>{
+      const prevP = i? pts[i-1].p : q.prec;
+      ctx.fillStyle = (p.p>=prevP ? TC.up : TC.down) + "8c";
+      const bh = p.v/maxV*VOL_H;
+      ctx.fillRect(X(i)-bw/2, volTop+VOL_H-bh, bw, bh);
+    });
+    ctx.fillStyle = TC.hint; ctx.textAlign = "right";
+    ctx.fillText("量", L-8, volTop+VOL_H/2);
+  }
 
   if(pts.length<2){
     ctx.fillStyle=TC.hint; ctx.textAlign="center"; ctx.font="13px sans-serif";
     ctx.fillText(marketState(q.mk).open?"分时数据加载中…":"当前时段无分时数据（休市）", L+pw/2, T+ph/2);
     CHART_GEO = null; return;
+  }
+  if(klineNote){
+    ctx.font = "12px sans-serif"; ctx.textAlign = "center"; ctx.fillStyle = TC.hint;
+    ctx.fillText(klineNote, L + pw/2, T + 12);
+    ctx.font = "11px ui-monospace,Menlo,monospace";
   }
   // 面积 + 折线
   const col = q.chg>0 ? TC.up : q.chg<0 ? TC.down : TC.flat;
@@ -871,7 +997,8 @@ function drawChart(){
 /* 日K蜡烛图 */
 function drawKline(ctx,w,h,q){
   const ks = S.klines[q.code];
-  const L=62,R=64,T=14,B=26,VOL_H=Math.min(78,h*0.22);
+  const hasVol = ks.some(k => k.v > 0);
+  const L=62,R=64,T=14,B=26,VOL_H=hasVol?Math.min(78,h*0.22):0;
   const pw=w-L-R, ph=h-T-B-VOL_H-8;
   if(pw<20||ph<20) return;
   const hi = Math.max(...ks.map(k=>k.h)), lo = Math.min(...ks.map(k=>k.l));
@@ -905,8 +1032,10 @@ function drawKline(ctx,w,h,q){
     const y1=Y(Math.max(k.o,k.c)), y2=Y(Math.min(k.o,k.c));
     if(up){ ctx.strokeRect(x-bw/2, y1, bw, Math.max(1,y2-y1)); }
     else  { ctx.fillRect(x-bw/2, y1, bw, Math.max(1,y2-y1)); }
-    ctx.fillStyle = (up?TC.up:TC.down) + "80";
-    const bh=k.v/maxV*VOL_H; ctx.fillRect(x-bw/2, volTop+VOL_H-bh, bw, bh);
+    if(hasVol){
+      ctx.fillStyle = (up?TC.up:TC.down) + "80";
+      const bh=k.v/maxV*VOL_H; ctx.fillRect(x-bw/2, volTop+VOL_H-bh, bw, bh);
+    }
   });
   [[5,TC.ma5],[10,TC.ma10]].forEach(([n,c])=>{
     const m=ma(n); ctx.strokeStyle=c; ctx.lineWidth=1.3; ctx.beginPath();
@@ -914,8 +1043,10 @@ function drawKline(ctx,w,h,q){
     m.forEach((v,i)=>{ if(v==null) return; started?ctx.lineTo(X(i),Y(v)):(ctx.moveTo(X(i),Y(v)),started=true); });
     ctx.stroke();
   });
-  ctx.strokeStyle=TC.grid; ctx.beginPath();
-  ctx.moveTo(L,volTop+VOL_H); ctx.lineTo(L+pw,volTop+VOL_H); ctx.stroke();
+  if(hasVol){
+    ctx.strokeStyle=TC.grid; ctx.beginPath();
+    ctx.moveTo(L,volTop+VOL_H); ctx.lineTo(L+pw,volTop+VOL_H); ctx.stroke();
+  }
   // 日期轴
   ctx.fillStyle=TC.hint;
   [0,Math.floor(ks.length/2),ks.length-1].forEach((i,n)=>{
@@ -1137,13 +1268,17 @@ function renderChartInfo(){
     ? `${t.slice(0,4)}-${t.slice(4,6)}-${t.slice(6,8)} ${t.slice(8,10)}:${t.slice(10,12)}:${t.slice(12,14)}`
     : t;
   const amt = amountText(q.mk, q.amountWan);
+  // 成交额 > 成交量 > 涨跌额：日经不报量，KOSPI 的量单位和别家对不上，一律退成涨跌额
+  const last = amt              ? ["成交额", amt, "flat"]
+             : (q.mk === "us" && q.vol > 0) ? ["成交量", (q.vol/1e8).toFixed(2)+"亿", "flat"]
+             : ["涨跌额", sign(q.chg), cls(q.chg)];
   const items = [
     ["今开", num(q.open), cls(q.open-q.prec)],
     ["昨收", num(q.prec), "flat"],
     ["最高", num(q.high), cls(q.high-q.prec)],
     ["最低", num(q.low),  cls(q.low-q.prec)],
     ["振幅", num(q.amp)+"%", "flat"],
-    amt ? ["成交额", amt, "flat"] : ["成交量", (q.vol/1e8).toFixed(2)+"亿", "flat"],
+    last,
   ];
   $("#stats").innerHTML = items.map(([k,v,c])=>
     `<div class="stat"><div class="k">${k}</div><div class="v ${c}">${v}</div></div>`).join("");
